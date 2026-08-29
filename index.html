@@ -811,6 +811,10 @@
           });
         }
         const writable = await handle.createWritable();
+        // Explicitly clear out whatever the file currently holds before writing the
+        // new content, so Save always fully replaces the old save rather than relying
+        // on the write/close to implicitly swap it out from under us.
+        await writable.truncate(0);
         await writable.write(json);
         await writable.close();
         setCurrentFile(handle.name, handle);
