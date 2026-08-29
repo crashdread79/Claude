@@ -800,40 +800,40 @@
 
     if (window.showSaveFilePicker) {
       try {
-        // Existing save: we already have a file on disk (from a previous save, or a loaded
-        // file) - just overwrite it in place, no dialog.
-        if (currentFileHandle) {
-          const allowed = await verifyFileHandlePermission(currentFileHandle, true);
-          if (!allowed) throw new Error('Permission to write to the file was denied.');
-          const writable = await currentFileHandle.createWritable();
-          await writable.write(json);
-          await writable.close();
-          return;
+        let handle = currentFileHandle;
+        if (handle) {
+          // Reusing a handle from an earlier save/load — make sure we still have write access.
+          const allowed = await verifyFileHandlePermission(handle, true);
+          if (!allowed) handle = null; // permission lost — fall through and ask for a location again
         }
-
-        // First save (or no reusable handle) — ask where to save and what to call it.
-        const suggestedName = `Monthly Expense - ${formatMonth(currentMonth)}.json`;
-        const handle = await window.showSaveFilePicker({
-          suggestedName,
-          startIn: 'documents', // defaults the dialog to the Documents folder
-          types: [{ description: 'JSON file', accept: { 'application/json': ['.json'] } }]
-        });
+        if (!handle) {
+          // First save (or no reusable handle) — ask where to save and what to call it.
+          const suggestedName = `Monthly Expense - ${formatMonth(currentMonth)}.json`;
+          handle = await window.showSaveFilePicker({
+            suggestedName,
+            startIn: 'documents', // defaults the dialog to the Documents folder
+            types: [{ description: 'JSON file', accept: { 'application/json': ['.json'] } }]
+          });
+        }
         const writable = await handle.createWritable();
         await writable.write(json);
         await writable.close();
         setCurrentFile(handle.name, handle);
+        return;
       } catch (err) {
-        if (err.name !== 'AbortError') {
-          alert('Error saving file: ' + err.message);
-        }
+        if (err.name === 'AbortError') return; // user cancelled the picker
+        // createWritable()/write() can still fail even after a location was picked — e.g.
+        // some Android browsers allow showSaveFilePicker() but block the actual write when
+        // the page itself was opened from a content:// URI. Fall back to a download so the
+        // save still produces a file instead of just showing an error.
+        console.error('Save picker failed, falling back to download:', err);
       }
-      return;
     }
 
-    // Mobile / fallback (Android, iOS, Firefox): no real file-system access, so this
-    // downloads the JSON — lands in the phone's Downloads folder automatically (Android
-    // doesn't let a web page target Documents specifically), visible in the Files app.
-    // Reuses the same filename every time once one has been chosen.
+    // Mobile / fallback (Android, iOS, Firefox, or a blocked write above): no working
+    // file-system write access, so this downloads the JSON — lands in the phone's Downloads
+    // folder automatically (Android doesn't let a web page target Documents specifically),
+    // visible in the Files app. Reuses the same filename every time once one has been chosen.
     const suggestedName = currentFileName || `Monthly Expense - ${formatMonth(currentMonth)}.json`;
     downloadFile(json, suggestedName, 'application/json;charset=utf-8;');
     setCurrentFile(suggestedName);
