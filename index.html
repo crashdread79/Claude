@@ -788,37 +788,46 @@
     URL.revokeObjectURL(url);
   }
 
+  async function verifyFileHandlePermission(handle, withWrite) {
+    const opts = withWrite ? { mode: 'readwrite' } : {};
+    if ((await handle.queryPermission(opts)) === 'granted') return true;
+    if ((await handle.requestPermission(opts)) === 'granted') return true;
+    return false;
+  }
+
   async function saveFile() {
     const json = buildJson();
 
     if (window.showSaveFilePicker) {
       try {
-        let handle = currentFileHandle;
-        if (handle) {
-          // Reusing a handle from an earlier save/load — make sure we still have write access.
-          const perm = await handle.queryPermission({ mode: 'readwrite' });
-          if (perm !== 'granted' && (await handle.requestPermission({ mode: 'readwrite' })) !== 'granted') {
-            handle = null; // permission lost — fall through and ask for a location again
-          }
+        // Existing save: we already have a file on disk (from a previous save, or a loaded
+        // file) - just overwrite it in place, no dialog.
+        if (currentFileHandle) {
+          const allowed = await verifyFileHandlePermission(currentFileHandle, true);
+          if (!allowed) throw new Error('Permission to write to the file was denied.');
+          const writable = await currentFileHandle.createWritable();
+          await writable.write(json);
+          await writable.close();
+          return;
         }
-        if (!handle) {
-          // First save (or no reusable handle) — ask where to save and what to call it.
-          const suggestedName = `Monthly Expense - ${formatMonth(currentMonth)}.json`;
-          handle = await window.showSaveFilePicker({
-            suggestedName,
-            startIn: 'documents', // defaults the dialog to the Documents folder
-            types: [{ description: 'JSON file', accept: { 'application/json': ['.json'] } }]
-          });
-        }
+
+        // First save (or no reusable handle) — ask where to save and what to call it.
+        const suggestedName = `Monthly Expense - ${formatMonth(currentMonth)}.json`;
+        const handle = await window.showSaveFilePicker({
+          suggestedName,
+          startIn: 'documents', // defaults the dialog to the Documents folder
+          types: [{ description: 'JSON file', accept: { 'application/json': ['.json'] } }]
+        });
         const writable = await handle.createWritable();
         await writable.write(json);
         await writable.close();
         setCurrentFile(handle.name, handle);
-        return;
       } catch (err) {
-        if (err.name === 'AbortError') return; // user cancelled the picker
-        console.error('Save picker failed, falling back to download:', err);
+        if (err.name !== 'AbortError') {
+          alert('Error saving file: ' + err.message);
+        }
       }
+      return;
     }
 
     // Mobile / fallback (Android, iOS, Firefox): no real file-system access, so this
